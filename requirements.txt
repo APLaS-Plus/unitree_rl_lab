@@ -1,0 +1,58 @@
+# Requirements generated from pyproject.toml
+# This file includes all Python dependencies for the project
+
+# Core dependencies
+numpy
+h5py
+open3d
+torch
+tensordict
+matplotlib
+gymnasium
+gym
+scipy
+pyyaml
+prettytable
+toml
+trimesh
+tqdm
+psutil
+
+# Isaac Lab and related packages
+# isaaclab
+# isaaclab_tasks
+# isaaclab_assets
+# isaaclab_mimic
+# isaaclab_rl
+
+# NVIDIA Omniverse packages
+# Note: These may require specific installation methods
+# isaacsim
+# omni.replicator.core
+# pxr
+# omni.kit
+# warp
+# carb
+
+# Build system requirements
+setuptools
+
+# Development tools
+black
+isort
+
+# Type checking
+pyright
+
+# Note: The following packages are mentioned but may not be available via pip:
+# - bpy (Blender Python - usually comes with Blender)
+# - hid (likely refers to hidapi)
+# - Semantics (unclear which specific package this refers to)
+
+# Optional: If you need HID support
+hidapi
+
+# For compatibility with pyright's type checking
+types-psutil
+types-PyYAML
+types-setuptools

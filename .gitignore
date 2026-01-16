@@ -1,3 +1,5 @@
+uv.lock
+
 # C++
 **/cmake-build*/
 **/build*/
