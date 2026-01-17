@@ -88,7 +88,7 @@ APLAS_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
         ),
         "waves": terrain_gen.HfWaveTerrainCfg(
             proportion=0.1, amplitude_range=(0.01, 0.3),
-        )
+        ),
         "boxes": terrain_gen.MeshRandomGridTerrainCfg(
             proportion=0.1, grid_width=0.45, grid_height_range=(0.05, 0.2), platform_width=2.0
         ),
