@@ -89,9 +89,33 @@ def compute_symmetric_states(
     Returns:
         Tuple of (symmetric_obs, symmetric_actions) with same shapes as inputs
     """
-    batch_size = obs.shape[0]
-    obs_dim = obs.shape[1]
-    sym_obs = obs.clone()
+    # Handle TensorDict input (rsl_rl may pass obs as TensorDict)
+    if hasattr(obs, "keys"):
+        # obs is a TensorDict, extract the actual observation tensor
+        if "obs" in obs.keys():
+            obs_tensor = obs["obs"]
+        elif "policy" in obs.keys():
+            obs_tensor = obs["policy"]
+        else:
+            # Try to get the first tensor
+            obs_tensor = next(iter(obs.values()))
+        is_tensordict = True
+        original_obs = obs
+    else:
+        obs_tensor = obs
+        is_tensordict = False
+
+    # Ensure 2D shape [batch, obs_dim]
+    if obs_tensor.dim() == 1:
+        obs_tensor = obs_tensor.unsqueeze(0)
+        actions = actions.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+
+    batch_size = obs_tensor.shape[0]
+    obs_dim = obs_tensor.shape[1]
+    sym_obs = obs_tensor.clone()
     sym_actions = actions.clone()
 
     # ========================================================================
@@ -157,5 +181,23 @@ def compute_symmetric_states(
     actions_swapped = sym_actions[:, JOINT_SWAP_INDICES]
     actions_swapped[:, HIP_JOINT_INDICES] = -actions_swapped[:, HIP_JOINT_INDICES]
     sym_actions = actions_swapped
+
+    # Handle squeeze if input was 1D
+    if squeeze_output:
+        sym_obs = sym_obs.squeeze(0)
+        sym_actions = sym_actions.squeeze(0)
+
+    # Return in the same format as input
+    if is_tensordict:
+        # Create a new TensorDict with the symmetric observations
+        result_obs = original_obs.clone()
+        if "obs" in original_obs.keys():
+            result_obs["obs"] = sym_obs
+        elif "policy" in original_obs.keys():
+            result_obs["policy"] = sym_obs
+        else:
+            key = next(iter(original_obs.keys()))
+            result_obs[key] = sym_obs
+        return result_obs, sym_actions
 
     return sym_obs, sym_actions
