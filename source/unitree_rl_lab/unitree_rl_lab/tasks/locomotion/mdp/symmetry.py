@@ -57,6 +57,7 @@ def _swap_and_flip_joints(tensor: torch.Tensor, dim_offset: int = 0) -> torch.Te
 
 
 def compute_symmetric_states(
+    env,
     obs: torch.Tensor,
     actions: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -81,6 +82,7 @@ def compute_symmetric_states(
         [62:63] base_mass          - no change (scalar property)
 
     Args:
+        env: The environment object (passed by rsl_rl, can be used to access env properties).
         obs: Observations tensor of shape [batch, obs_dim]
         actions: Actions tensor of shape [batch, 12] (joint position commands)
 
