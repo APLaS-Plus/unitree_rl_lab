@@ -542,6 +542,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         lookat=(0.0, 0.0, 0.5),  # 观察目标点（相对于机器人）
         origin_type="asset_root",  # 相机跟踪资产根节点
         asset_name="robot",  # 跟踪的资产名称（在 scene 中定义的）
+        env_index=55,
     )
 
     def __post_init__(self):
