@@ -57,6 +57,58 @@ def _switch_go2_joints_left_right(joint_data: torch.Tensor) -> torch.Tensor:
     return joint_data_switched
 
 
+def _transform_obs_left_right(obs_tensor: torch.Tensor) -> torch.Tensor:
+    """Apply left-right symmetry transformation to observation tensor.
+
+    Observation Structure (Go2):
+        [0:3]   base_ang_vel       - flip X (Roll), Z (Yaw). Keep Y (Pitch).
+        [3:6]   projected_gravity  - flip Y component
+        [6:9]   velocity_commands  - flip Y, Z components (vy, wz)
+        [9:21]  joint_pos_rel      - swap L/R legs, flip hip signs
+        [21:33] joint_vel_rel      - swap L/R legs, flip hip signs
+        [33:45] last_action        - swap L/R legs, flip hip signs
+        [45:57] joint_effort       - swap L/R legs, flip hip signs (if present)
+        [57:60] base_lin_vel       - flip Y component (if present)
+        [60+]   other privileged   - no change
+    """
+    sym_obs = obs_tensor.clone()
+    obs_dim = obs_tensor.shape[1]
+
+    # [0:3] base_ang_vel: flip Roll (X) and Yaw (Z). Keep Pitch (Y).
+    sym_obs[:, 0] = -sym_obs[:, 0]  # Roll rate -> Flip
+    sym_obs[:, 2] = -sym_obs[:, 2]  # Yaw rate -> Flip
+
+    # [3:6] projected_gravity: flip Y component
+    sym_obs[:, 4] = -sym_obs[:, 4]
+
+    # [6:9] velocity_commands: flip Y (vy) and Z (wz)
+    sym_obs[:, 7] = -sym_obs[:, 7]  # vy
+    sym_obs[:, 8] = -sym_obs[:, 8]  # wz
+
+    # [9:21] joint_pos_rel: swap L/R, flip hip signs
+    sym_obs[:, 9:21] = _switch_go2_joints_left_right(sym_obs[:, 9:21])
+
+    # [21:33] joint_vel_rel: swap L/R, flip hip signs
+    sym_obs[:, 21:33] = _switch_go2_joints_left_right(sym_obs[:, 21:33])
+
+    # [33:45] last_action: swap L/R, flip hip signs
+    sym_obs[:, 33:45] = _switch_go2_joints_left_right(sym_obs[:, 33:45])
+
+    # Privileged observations (if present)
+    if obs_dim > 45:
+        # [45:57] joint_effort: swap L/R, flip hip signs
+        if obs_dim >= 57:
+            sym_obs[:, 45:57] = _switch_go2_joints_left_right(sym_obs[:, 45:57])
+
+        # [57:60] base_lin_vel: flip Y component
+        if obs_dim >= 60:
+            sym_obs[:, 58] = -sym_obs[:, 58]
+
+        # friction & base_mass: no change needed
+
+    return sym_obs
+
+
 @torch.no_grad()
 def compute_symmetric_states(
     env,
@@ -71,8 +123,10 @@ def compute_symmetric_states(
     reinforcement learning tasks by providing additional diverse data without requiring
     additional data collection.
 
-    NOTE: 当输入是 TensorDict 时，输出也是 TensorDict，包含原始数据和对称增强数据的拼接。
-    输出 batch_size = 输入 batch_size * 2 (原始 + 镜像)。
+    NOTE: 当输入是 TensorDict 时:
+    - 输出也是 TensorDict，包含原始数据和对称增强数据的拼接
+    - 输出 batch_size = 输入 batch_size * 2 (原始 + 镜像)
+    - 会保留 TensorDict 中的所有 keys (如 'policy', 'critic' 等)
 
     Args:
         env: The environment instance.
@@ -82,110 +136,67 @@ def compute_symmetric_states(
 
     Returns:
         Augmented observations and actions. Output batch size is 2x input batch size.
-        If input obs is TensorDict, output is also TensorDict with batch_size=[2*N].
+        If input obs is TensorDict, output is also TensorDict with all original keys preserved.
         Returns None if the respective input was None.
     """
-    # Handle TensorDict input
-    # NOTE: 需要保留原始 TensorDict 的 key 结构 (可能是 'obs' 或 'policy')
-    if obs is not None and hasattr(obs, "batch_size"):
-        # obs is a TensorDict
-        is_tensordict = True
-        original_obs = obs
-        # Extract the observation tensor from TensorDict and remember the key
-        if "obs" in obs.keys():
-            obs_tensor = obs["obs"]
-            obs_key = "obs"
-        elif "policy" in obs.keys():
-            obs_tensor = obs["policy"]
-            obs_key = "policy"
-        else:
-            obs_key = next(iter(obs.keys()))
-            obs_tensor = obs[obs_key]
-    elif obs is not None:
-        is_tensordict = False
-        obs_tensor = obs
-        obs_key = None
-    else:
-        is_tensordict = False
-        obs_tensor = None
-        obs_key = None
+    # Handle observations
+    if obs is not None:
+        # Check if obs is TensorDict (has batch_size attribute)
+        if hasattr(obs, "batch_size"):
+            # obs is a TensorDict - process ALL keys
+            is_tensordict = True
+            num_envs = obs.batch_size[0]
+            device = obs.device
 
-    # observations
-    if obs_tensor is not None:
-        num_envs = obs_tensor.shape[0]
-        obs_dim = obs_tensor.shape[1]
-        device = obs_tensor.device
+            # Create augmented TensorDict with all keys transformed
+            aug_dict_data = {}
+            for key in obs.keys():
+                obs_tensor = obs[key]
+                obs_dim = obs_tensor.shape[1]
 
-        # since we have 2 different symmetries (original + left-right), augment batch size by 2
-        obs_aug = torch.zeros(num_envs * 2, obs_dim, device=device)
+                # Create augmented tensor for this key
+                obs_aug = torch.zeros(num_envs * 2, obs_dim, device=device)
 
-        # -- original
-        obs_aug[:num_envs] = obs_tensor[:]
+                # Original
+                obs_aug[:num_envs] = obs_tensor[:]
 
-        # -- left-right symmetric
-        sym_obs = obs_tensor.clone()
+                # Left-right symmetric
+                obs_aug[num_envs : 2 * num_envs] = _transform_obs_left_right(obs_tensor)
 
-        # [0:3] base_ang_vel: [Roll, Pitch, Yaw]
-        # Flip Roll (X) and Yaw (Z). Keep Pitch (Y) unchanged.
-        sym_obs[:, 0] = -sym_obs[:, 0]  # Roll rate -> Flip
-        sym_obs[:, 2] = -sym_obs[:, 2]  # Yaw rate -> Flip
+                aug_dict_data[key] = obs_aug
 
-        # [3:6] projected_gravity: flip Y component
-        sym_obs[:, 4] = -sym_obs[:, 4]
-
-        # [6:9] velocity_commands: flip Y (vy) and Z (wz)
-        sym_obs[:, 7] = -sym_obs[:, 7]  # vy
-        sym_obs[:, 8] = -sym_obs[:, 8]  # wz
-
-        # [9:21] joint_pos_rel: swap L/R, flip hip signs
-        sym_obs[:, 9:21] = _switch_go2_joints_left_right(sym_obs[:, 9:21])
-
-        # [21:33] joint_vel_rel: swap L/R, flip hip signs
-        sym_obs[:, 21:33] = _switch_go2_joints_left_right(sym_obs[:, 21:33])
-
-        # [33:45] last_action: swap L/R, flip hip signs
-        sym_obs[:, 33:45] = _switch_go2_joints_left_right(sym_obs[:, 33:45])
-
-        # Privileged observations (if present)
-        if obs_dim > 45:
-            # [45:57] joint_effort: swap L/R, flip hip signs
-            if obs_dim >= 57:
-                sym_obs[:, 45:57] = _switch_go2_joints_left_right(sym_obs[:, 45:57])
-
-            # [57:60] base_lin_vel: flip Y component
-            if obs_dim >= 60:
-                sym_obs[:, 58] = -sym_obs[:, 58]
-
-            # friction & base_mass: no change needed
-
-        obs_aug[num_envs : 2 * num_envs] = sym_obs
-
-        # If input was TensorDict, return TensorDict with same key structure
-        if is_tensordict:
-            # Construct augmented TensorDict using the same key as input
-            obs_aug_dict = TensorDict(
-                {obs_key: obs_aug}, batch_size=[num_envs * 2], device=device
+            obs_aug_result = TensorDict(
+                aug_dict_data, batch_size=[num_envs * 2], device=device
             )
         else:
-            obs_aug_dict = obs_aug
-    else:
-        obs_aug_dict = None
+            # obs is a plain tensor
+            is_tensordict = False
+            num_envs = obs.shape[0]
+            obs_dim = obs.shape[1]
+            device = obs.device
 
-    # actions
+            obs_aug = torch.zeros(num_envs * 2, obs_dim, device=device)
+            obs_aug[:num_envs] = obs[:]
+            obs_aug[num_envs : 2 * num_envs] = _transform_obs_left_right(obs)
+
+            obs_aug_result = obs_aug
+    else:
+        obs_aug_result = None
+
+    # Handle actions
     if actions is not None:
         num_envs = actions.shape[0]
         action_dim = actions.shape[1]
         device = actions.device
 
-        # since we have 2 different symmetries, augment batch size by 2
         actions_aug = torch.zeros(num_envs * 2, action_dim, device=device)
 
-        # -- original
+        # Original
         actions_aug[:num_envs] = actions[:]
 
-        # -- left-right
+        # Left-right symmetric
         actions_aug[num_envs : 2 * num_envs] = _switch_go2_joints_left_right(actions[:])
     else:
         actions_aug = None
 
-    return obs_aug_dict, actions_aug
+    return obs_aug_result, actions_aug
