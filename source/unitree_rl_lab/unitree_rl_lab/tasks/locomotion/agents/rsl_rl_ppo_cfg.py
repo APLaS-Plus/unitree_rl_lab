@@ -33,8 +33,8 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
-        #symmetry_cfg=RslRlSymmetryCfg(
-        #    use_data_augmentation=True,
-        #    data_augmentation_func=mdp.symmetry.compute_symmetric_states,
-        #),
+        symmetry_cfg=RslRlSymmetryCfg(
+           use_data_augmentation=True,
+           data_augmentation_func=mdp.symmetry.compute_symmetric_states,
+        ),
     )
