@@ -89,6 +89,24 @@ def compute_symmetric_states(
     Returns:
         Tuple of (symmetric_obs, symmetric_actions) with same shapes as inputs
     """
+    # Handle None obs (rsl_rl may call with None obs for action-only transformation)
+    if obs is None:
+        # Only transform actions
+        sym_actions = actions.clone()
+        if actions.dim() == 1:
+            sym_actions = sym_actions.unsqueeze(0)
+            actions_swapped = sym_actions[:, JOINT_SWAP_INDICES]
+            actions_swapped[:, HIP_JOINT_INDICES] = -actions_swapped[
+                :, HIP_JOINT_INDICES
+            ]
+            return None, actions_swapped.squeeze(0)
+        else:
+            actions_swapped = sym_actions[:, JOINT_SWAP_INDICES]
+            actions_swapped[:, HIP_JOINT_INDICES] = -actions_swapped[
+                :, HIP_JOINT_INDICES
+            ]
+            return None, actions_swapped
+
     # Handle TensorDict input (rsl_rl may pass obs as TensorDict)
     if hasattr(obs, "keys"):
         # obs is a TensorDict, extract the actual observation tensor
