@@ -71,6 +71,9 @@ def compute_symmetric_states(
     reinforcement learning tasks by providing additional diverse data without requiring
     additional data collection.
 
+    NOTE: 当输入是 TensorDict 时，输出也是 TensorDict，包含原始数据和对称增强数据的拼接。
+    输出 batch_size = 输入 batch_size * 2 (原始 + 镜像)。
+
     Args:
         env: The environment instance.
         obs: The original observation tensor or TensorDict. Defaults to None.
@@ -78,26 +81,34 @@ def compute_symmetric_states(
         obs_type: The type of observation to augment. Defaults to "policy".
 
     Returns:
-        Augmented observations and actions tensors, or None if the respective input was None.
+        Augmented observations and actions. Output batch size is 2x input batch size.
+        If input obs is TensorDict, output is also TensorDict with batch_size=[2*N].
+        Returns None if the respective input was None.
     """
     # Handle TensorDict input
+    # NOTE: 需要保留原始 TensorDict 的 key 结构 (可能是 'obs' 或 'policy')
     if obs is not None and hasattr(obs, "batch_size"):
         # obs is a TensorDict
         is_tensordict = True
         original_obs = obs
-        # Extract the observation tensor from TensorDict
+        # Extract the observation tensor from TensorDict and remember the key
         if "obs" in obs.keys():
             obs_tensor = obs["obs"]
+            obs_key = "obs"
         elif "policy" in obs.keys():
             obs_tensor = obs["policy"]
+            obs_key = "policy"
         else:
-            obs_tensor = next(iter(obs.values()))
+            obs_key = next(iter(obs.keys()))
+            obs_tensor = obs[obs_key]
     elif obs is not None:
         is_tensordict = False
         obs_tensor = obs
+        obs_key = None
     else:
         is_tensordict = False
         obs_tensor = None
+        obs_key = None
 
     # observations
     if obs_tensor is not None:
@@ -149,11 +160,11 @@ def compute_symmetric_states(
 
         obs_aug[num_envs : 2 * num_envs] = sym_obs
 
-        # If input was TensorDict, return TensorDict
+        # If input was TensorDict, return TensorDict with same key structure
         if is_tensordict:
-            # Construct augmented TensorDict
+            # Construct augmented TensorDict using the same key as input
             obs_aug_dict = TensorDict(
-                {"obs": obs_aug}, batch_size=[num_envs * 2], device=device
+                {obs_key: obs_aug}, batch_size=[num_envs * 2], device=device
             )
         else:
             obs_aug_dict = obs_aug
