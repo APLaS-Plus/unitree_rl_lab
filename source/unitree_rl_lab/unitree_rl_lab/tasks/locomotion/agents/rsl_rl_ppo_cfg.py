@@ -11,7 +11,7 @@ from unitree_rl_lab.tasks.locomotion import mdp
 class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
     max_iterations = 500_00
-    save_interval = 1000
+    save_interval = 2000
     experiment_name = ""  # same as task name
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
@@ -27,14 +27,14 @@ class BasePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         entropy_coef=0.01,
         num_learning_epochs=5,
         num_mini_batches=4,
-        learning_rate=5e-4,
+        learning_rate=1e-3,
         schedule="adaptive",
         gamma=0.99,
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
-        symmetry_cfg=RslRlSymmetryCfg(
-            use_data_augmentation=True,
-            data_augmentation_func=mdp.symmetry.compute_symmetric_states,
-        ),
+        #symmetry_cfg=RslRlSymmetryCfg(
+        #    use_data_augmentation=True,
+        #    data_augmentation_func=mdp.symmetry.compute_symmetric_states,
+        #),
     )

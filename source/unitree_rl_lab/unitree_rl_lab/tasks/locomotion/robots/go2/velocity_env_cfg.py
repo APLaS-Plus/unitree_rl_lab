@@ -78,7 +78,7 @@ APLAS_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.1),
         "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.1, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.5
+            proportion=0.2, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.5
         ),
         "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
             proportion=0.1,
@@ -91,11 +91,6 @@ APLAS_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
             slope_range=(0.0, 0.4),
             platform_width=2.0,
             border_width=0.5,
-        ),
-        "waves": terrain_gen.HfWaveTerrainCfg(
-            proportion=0.1,
-            amplitude_range=(0.01, 0.2),  # 减小最大振幅
-            border_width=0.5,  # 添加 border_width
         ),
         "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
             proportion=0.1,
@@ -268,10 +263,10 @@ class CommandsCfg:
         rel_standing_envs=0.1,
         debug_vis=True,
         ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-            lin_vel_x=(-0.1, 0.1), lin_vel_y=(-0.1, 0.1), ang_vel_z=(-1, 1)
+            lin_vel_x=(-0.1, 0.1), lin_vel_y=(-0.1, 0.1), ang_vel_z=(-1.0, 1.0)
         ),
         limit_ranges=mdp.UniformLevelVelocityCommandCfg.Ranges(
-            lin_vel_x=(-2.0, 2.0), lin_vel_y=(-0.6, 0.6), ang_vel_z=(-1.0, 1.0)
+            lin_vel_x=(-1.0, 1.0), lin_vel_y=(-0.4, 0.5), ang_vel_z=(-1.0, 1.0)
         ),
     )
 
@@ -538,8 +533,8 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 
     # Viewer 相机设置 (调整 eye 和 lookat 可改变录像视角)
     viewer: ViewerCfg = ViewerCfg(
-        eye=(3.0, 3.0, 2.5),  # 相机相对于机器人的偏移 (x, y, z)
-        lookat=(0.0, 0.0, 0.5),  # 观察目标点（相对于机器人）
+        eye=(3.0, 3.0, 5.0),  # 相机相对于机器人的偏移 (x, y, z)
+        lookat=(0.0, 0.0, 0.0),  # 观察目标点（相对于机器人）
         origin_type="asset_root",  # 相机跟踪资产根节点
         asset_name="robot",  # 跟踪的资产名称（在 scene 中定义的）
         env_index=55,
