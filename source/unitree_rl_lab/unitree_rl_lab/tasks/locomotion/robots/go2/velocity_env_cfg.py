@@ -538,9 +538,10 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 
     # Viewer 相机设置 (调整 eye 和 lookat 可改变录像视角)
     viewer: ViewerCfg = ViewerCfg(
-        eye=(4.0, 4.0, 3.0),  # 相机位置 (x, y, z)
-        lookat=(0.0, 0.0, 0.0),  # 观察目标点
-        origin_type="env",  # 相对于环境原点
+        eye=(3.0, 3.0, 2.5),  # 相机相对于机器人的偏移 (x, y, z)
+        lookat=(0.0, 0.0, 0.5),  # 观察目标点（相对于机器人）
+        origin_type="asset_root",  # 相机跟踪资产根节点
+        asset_name="robot",  # 跟踪的资产名称（在 scene 中定义的）
     )
 
     def __post_init__(self):
