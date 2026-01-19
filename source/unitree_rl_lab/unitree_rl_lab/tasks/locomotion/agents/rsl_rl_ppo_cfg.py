@@ -22,7 +22,9 @@ class RslRlRMAActorCriticCfg:
         [本体感知, 隐向量] → Actor → 动作
     """
 
-    class_name: str = "RMAActorCritic"  # 自定义类名
+    class_name: str = (
+        "__import__('unitree_rl_lab.tasks.locomotion.agents.rma_actor_critic', fromlist=['RMAActorCritic']).RMAActorCritic"
+    )
 
     # Encoder配置 (特权信息 → 隐向量)
     latent_dim: int = 8  # RMA论文默认值
