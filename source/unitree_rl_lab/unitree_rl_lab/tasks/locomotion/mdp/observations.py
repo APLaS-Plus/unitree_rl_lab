@@ -52,3 +52,47 @@ def base_mass(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg) -> torch.Tensor
     # normalized = (base_mass_val - 3) / 2.0
 
     return base_mass_val.to(env.device)
+
+
+def feet_heights_relative(
+    env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg
+) -> torch.Tensor:
+    """返回四只脚相对地面的高度 (特权信息)
+
+    使用body位置的z坐标减去地形高度（如果有terrain）
+
+    输出: [num_envs, 4] -> [FL_foot, FR_foot, RL_foot, RR_foot]
+    """
+    asset = env.scene[asset_cfg.name]
+
+    # 获取脚部body的索引和世界坐标
+    # Go2的脚部body名称: FL_foot, FR_foot, RL_foot, RR_foot
+    foot_body_names = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
+    foot_indices = asset.find_bodies(foot_body_names)[0]
+
+    # body_pos_w shape: [num_envs, num_bodies, 3]
+    foot_positions = asset.data.body_pos_w[:, foot_indices, :]  # [N, 4, 3]
+
+    # 获取地形高度
+    if hasattr(env.scene, "terrain") and env.scene.terrain is not None:
+        # 使用terrain的height_lookup获取每个脚下方的地形高度
+        # foot_positions[..., :2] 是 xy 坐标
+        terrain = env.scene.terrain
+        if hasattr(terrain, "flat_terrain_origins"):
+            # 计算脚的绝对xy位置
+            foot_xy = foot_positions[:, :, :2]  # [N, 4, 2]
+            # 获取地形高度 - 简化处理，使用env地形高度
+            # 这里使用机器人根部下方的地形高度作为近似
+            terrain_heights = env.scene.terrain.data.root_terrain_heights.unsqueeze(
+                -1
+            )  # [N, 1]
+            terrain_heights = terrain_heights.expand(-1, 4)  # [N, 4]
+        else:
+            terrain_heights = torch.zeros(env.num_envs, 4, device=env.device)
+    else:
+        terrain_heights = torch.zeros(env.num_envs, 4, device=env.device)
+
+    # 相对高度 = 脚部z坐标 - 地形高度
+    relative_heights = foot_positions[:, :, 2] - terrain_heights  # [N, 4]
+
+    return relative_heights.to(env.device)

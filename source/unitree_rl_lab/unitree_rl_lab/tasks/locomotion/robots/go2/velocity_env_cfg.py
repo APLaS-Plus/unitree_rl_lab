@@ -290,15 +290,12 @@ class ObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Observations for policy group (RMA Teacher).
+        """本体感知观测 (Proprioception Only).
 
-        Structure: [base_obs (proprioception)] + [privileged_info (grouped at end)]
-
-        This layout matches the RMA paper's teacher policy, where privileged info
-        is concatenated at the end for easy extraction by the encoder in stage 2.
+        仅包含机器人自身的传感器信息，用于学生模型和基础策略。
+        RMA架构中，这部分信息对教师和学生模型都可见。
         """
 
-        # === Proprioception (Base Observations) ===
         base_ang_vel = ObsTerm(
             func=mdp.base_ang_vel,
             scale=0.2,
@@ -328,8 +325,21 @@ class ObservationsCfg:
         )
         last_action = ObsTerm(func=mdp.last_action, clip=(-100, 100))
 
-        # === Privileged Information (Grouped at End for RMA Encoder) ===
-        # These will be the target for the encoder to predict in stage 2
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = True
+
+    policy: PolicyCfg = PolicyCfg()
+
+    @configclass
+    class PrivilegedCfg(ObsGroup):
+        """特权信息观测 (Privileged Information).
+
+        仅在仿真中可用的信息，真实部署中需要通过encoder预测。
+        包含：关节力矩、基座线速度、摩擦系数、基座质量、足部高度。
+        总维度: 12 + 3 + 2 + 1 + 4 = 22
+        """
+
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01, clip=(-100, 100))
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100, 100))
         friction = ObsTerm(
@@ -341,19 +351,28 @@ class ObservationsCfg:
             params={"asset_cfg": SceneEntityCfg("robot")},
             scale=0.1,  # 归一化: 15kg -> 1.5
         )
+        feet_heights = ObsTerm(
+            func=mdp.feet_heights_relative,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            clip=(-1.0, 1.0),
+        )
 
         def __post_init__(self):
-            # self.history_length = 5
-            self.enable_corruption = True
+            self.enable_corruption = False  # 特权信息不加噪声
             self.concatenate_terms = True
 
-    # observation groups
-    policy: PolicyCfg = PolicyCfg()
+    privileged: PrivilegedCfg = PrivilegedCfg()
 
     @configclass
     class CriticCfg(ObsGroup):
-        """Observations for critic group."""
+        """Critic观测 (用于价值函数).
 
+        Critic可以同时看到本体感知和特权信息，用于更准确的价值估计。
+        注意：这里保持与旧版兼容，直接包含所有信息。
+        rsl_rl的obs_groups配置会处理实际的输入映射。
+        """
+
+        # 本体感知
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.2, clip=(-100, 100))
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100, 100))
         velocity_commands = ObsTerm(
@@ -365,7 +384,7 @@ class ObservationsCfg:
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, clip=(-100, 100))
         last_action = ObsTerm(func=mdp.last_action, clip=(-100, 100))
 
-        # 特权信息 (Privileged Info for RMA)
+        # 特权信息
         joint_effort = ObsTerm(func=mdp.joint_effort, scale=0.01, clip=(-100, 100))
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, clip=(-100, 100))
         friction = ObsTerm(
@@ -375,18 +394,45 @@ class ObservationsCfg:
         base_mass = ObsTerm(
             func=mdp.base_mass,
             params={"asset_cfg": SceneEntityCfg("robot")},
-            scale=0.1,  # 归一化: 15kg -> 1.5
+            scale=0.1,
         )
-        # height_scanner = ObsTerm(func=mdp.height_scan,
-        #     params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-        #     clip=(-1.0, 5.0),
-        # )
+        feet_heights = ObsTerm(
+            func=mdp.feet_heights_relative,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+            clip=(-1.0, 1.0),
+        )
 
-        # def __post_init__(self):
-        #     self.history_length = 5
+        def __post_init__(self):
+            self.enable_corruption = False
+            self.concatenate_terms = True
 
-    # privileged observations
     critic: CriticCfg = CriticCfg()
+
+    @configclass
+    class StudentPolicyCfg(ObsGroup):
+        """学生模型的观测配置 (Adaptation Module)。
+        仅包含本体感知信息，不包含任何特权信息 (Privileged Info)。
+        关键点：需要启用 history_length 来提供时序信息。
+        """
+
+        # === 本体感知信息 (与 Teacher 的非特权部分一致) ===
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, scale=0.2, clip=(-100, 100))
+        projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100, 100))
+        velocity_commands = ObsTerm(
+            func=mdp.generated_commands, params={"command_name": "base_velocity"}
+        )
+        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, clip=(-100, 100))
+        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, scale=0.05, clip=(-100, 100))
+        last_action = ObsTerm(func=mdp.last_action, clip=(-100, 100))
+
+        def __post_init__(self):
+            # RMA 依赖较长的历史信息来进行环境参数辨识
+            self.history_length = 50
+            self.enable_corruption = True  # 是否启用噪声
+            self.concatenate_terms = True  # 拼接成一个向量
+
+    # 注册新的观测组
+    student_policy: StudentPolicyCfg = StudentPolicyCfg()
 
 
 @configclass
@@ -537,7 +583,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         lookat=(0.0, 0.0, 0.0),  # 观察目标点（相对于机器人）
         origin_type="asset_root",  # 相机跟踪资产根节点
         asset_name="robot",  # 跟踪的资产名称（在 scene 中定义的）
-        env_index=55,
+        env_index=2000,
     )
 
     def __post_init__(self):
