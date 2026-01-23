@@ -78,53 +78,47 @@ APLAS_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.1),
         "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.2, noise_range=(0.01, 0.06), noise_step=0.01, border_width=0.5
+            proportion=0.2, noise_range=(0.01, 0.25), noise_step=0.01, border_width=0.2
         ),
         "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
-            proportion=0.1,
+            proportion=0.2,
             slope_range=(0.0, 0.4),
             platform_width=2.0,
-            border_width=0.5,
+            border_width=0.2,
         ),
         "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1,
+            proportion=0.2,
             slope_range=(0.0, 0.4),
             platform_width=2.0,
-            border_width=0.5,
-        ),
-        "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.1,
-            slope_range=(0.0, 0.4),
-            platform_width=2.0,
-            border_width=0.5,
+            border_width=0.2,
         ),
         "waves": terrain_gen.HfWaveTerrainCfg(
             proportion=0.1,
             amplitude_range=(0.01, 0.3),
-            border_width=0.5,
+            border_width=0.2,
         ),
         "boxes": terrain_gen.MeshRandomGridTerrainCfg(
-            proportion=0.1,
+            proportion=0.2,
             grid_width=0.45,
             grid_height_range=(0.05, 0.2),
             platform_width=2.0,
         ),
-        "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
-            proportion=0.1,
-            step_height_range=(0.05, 0.23),
-            step_width=0.3,
-            platform_width=2.0,
-            border_width=1.0,
-            holes=False,
-        ),
-        "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
-            proportion=0.1,
-            step_height_range=(0.05, 0.23),
-            step_width=0.3,
-            platform_width=2.0,
-            border_width=1.0,
-            holes=False,
-        ),
+        # "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
+        #     proportion=0.1,
+        #     step_height_range=(0.05, 0.23),
+        #     step_width=0.3,
+        #     platform_width=2.0,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
+        # "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+        #     proportion=0.1,
+        #     step_height_range=(0.05, 0.23),
+        #     step_width=0.3,
+        #     platform_width=2.0,
+        #     border_width=1.0,
+        #     holes=False,
+        # ),
     },
 )
 
@@ -463,6 +457,15 @@ class RewardsCfg:
 
     # -- robot
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-2.5)
+    # RMA-style: penalize deviation from target standing height (Go2 ~0.34m)
+    base_height = RewTerm(
+        func=mdp.base_height_l2,
+        weight=-1.0,
+        params={
+            "target_height": 0.34,
+            "sensor_cfg": SceneEntityCfg("height_scanner"),
+        },
+    )
 
     joint_pos = RewTerm(
         func=mdp.joint_position_penalty,
@@ -522,17 +525,28 @@ class RewardsCfg:
 
 @configclass
 class TerminationsCfg:
-    """Termination terms for the MDP."""
+    """Termination terms for the MDP.
+
+    RMA-style strict conditions:
+    - bad_orientation: 0.4 rad (~23°) to enforce stable gait
+    - root_height_below_minimum: 0.24m to prevent crouching
+    """
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     base_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names="base"),
-            "threshold": 1.0,
+            "threshold": 10.0,
         },
     )
-    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.8})
+    # RMA uses 0.2 rad for training, 0.8 for eval. We use 0.4 as a balance.
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.4})
+    # Prevent crouching: terminate if base drops below 0.24m (Go2 standing ~0.35m)
+    low_height = DoneTerm(
+        func=mdp.root_height_below_minimum,
+        params={"minimum_height": 0.24},
+    )
 
 
 @configclass
