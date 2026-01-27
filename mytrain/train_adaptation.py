@@ -177,15 +177,18 @@ class ChunkedDataset(torch.utils.data.IterableDataset):
         # Approximate length (sum of file sizes / sample size) or just arbitrary
         # We can try to peek at first file and multiply
         # But IterableDataset doesn't enforce __len__.
-        # We return a dummy high numbdef load_stats(stats_path, device):
+        return 10000000  # Dummy, doesn't affect training loop much except progress bar
+
+
+def load_stats(stats_path, device):
     """Load pre-computed stats."""
     print(f"[INFO] Loading stats from: {stats_path}")
     stats = torch.load(stats_path, map_location=device)
-    
+
     latent_mean = stats["mean"].to(device)
     latent_std = stats["std"].to(device)
     latent_std[latent_std < 1e-6] = 1.0
-    
+
     # Check for Phys Stats (added in new analysis version)
     if "phys_mean" in stats:
         phys_mean = stats["phys_mean"].to(device)
@@ -196,22 +199,23 @@ class ChunkedDataset(torch.utils.data.IterableDataset):
         print("[WARNING] No physical parameter statistics found. Using identity normalization.")
         phys_mean = torch.zeros(1, device=device)
         phys_std = torch.ones(1, device=device)
-        
+
     return latent_mean, latent_std, phys_mean, phys_std
+
 
 def train(args):
     # Setup logging
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = os.path.join(args.log_dir, timestamp)
     os.makedirs(log_dir, exist_ok=True)
-    
+
     # Save Hyperparameters
     with open(os.path.join(log_dir, "params.json"), "w") as f:
         json.dump(vars(args), f, indent=4)
-        
+
     writer = SummaryWriter(log_dir=log_dir)
     print(f"[INFO] Tensorboard logging to: {log_dir}")
-    
+
     # Check data files
     # We delay loading to dataset init
 
@@ -389,36 +393,36 @@ def train(args):
         writer.add_scalar("Monitoring/LR", current_lr, epoch)
         if grad_sim_count > 0:
             writer.add_scalar("Monitoring/GradCosineSim", avg_grad_sim, epoch)
-            
+
         # --- Validation Loop ---
         model.eval()
         val_loss = 0.0
         val_latent = 0.0
         val_phys = 0.0
-        
+
         with torch.no_grad():
             for obs, target_latent_raw, target_phys_raw in val_dataloader:
                 obs = obs.to(args.device)
                 target_latent_raw = target_latent_raw.to(args.device)
                 target_phys_raw = target_phys_raw.to(args.device)
-                
+
                 target_latent = (target_latent_raw - latent_mean) / latent_std
                 target_phys = (target_phys_raw - phys_mean) / phys_std
-                
+
                 pred_latent, pred_phys = model(obs)
-                
+
                 l_latent = criterion(pred_latent, target_latent)
                 l_phys = criterion(pred_phys, target_phys)
                 t_loss = l_latent + lambda_aux * l_phys
-                
+
                 val_loss += t_loss.item()
                 val_latent += l_latent.item()
                 val_phys += l_phys.item()
-        
+
         avg_val_loss = val_loss / max(1, len(val_dataloader))
         avg_val_latent_loss = val_latent / max(1, len(val_dataloader))
         avg_val_phys_loss = val_phys / max(1, len(val_dataloader))
-        
+
         writer.add_scalar("Val/Loss_Total", avg_val_loss, epoch)
         writer.add_scalar("Val/Loss_Latent", avg_val_latent_loss, epoch)
         writer.add_scalar("Val/Loss_Phys", avg_val_phys_loss, epoch)
@@ -427,7 +431,7 @@ def train(args):
             print(
                 f"Epoch {epoch+1}/{args.epochs} | Train: {avg_loss:.4f} | Val: {avg_val_loss:.4f} (L: {avg_val_latent_loss:.4f}) | LR: {current_lr:.2e}"
             )
-            
+
         if (epoch + 1) % 10 == 0:
             # Save Checkpoint
             ckpt_path = os.path.join(log_dir, f"checkpoint_epoch_{epoch+1:03d}.pt")
