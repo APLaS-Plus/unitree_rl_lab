@@ -275,6 +275,9 @@ def train(args):
         grad_sim_count = 0
 
         for obs, target_latent_raw, target_phys_raw in dataloader:
+            obs = obs.to(args.device)
+            target_latent_raw = target_latent_raw.to(args.device)
+            target_phys_raw = target_phys_raw.to(args.device)
             # Normalize Targets using Pre-computed Stats
             target_latent = (target_latent_raw - latent_mean) / latent_std
             target_phys = (target_phys_raw - phys_mean) / phys_std
