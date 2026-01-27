@@ -14,6 +14,7 @@ import argparse
 
 
 def analyze(data_path, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
     print(f"[INFO] Loading data from {data_path}")
     data = torch.load(data_path)
 
