@@ -254,16 +254,48 @@ def train(args):
         optimizer, T_max=args.epochs, eta_min=1e-6
     )
 
-    # Dataloader
-    # Use CPU for dataset loading so workers can function
-    dataset = ChunkedDataset(args.data_path, device="cpu")
+    # --- Data Preparation (Split Train/Val) ---
+    all_files = sorted(glob.glob(args.data_path.replace(".pt", "_chunk*.pt")))
+    if not all_files:
+        # Fallback if specific file passed
+        if os.path.exists(args.data_path):
+            all_files = [args.data_path]
+        else:
+            raise FileNotFoundError(f"No files found for {args.data_path}")
 
-    dataloader = DataLoader(
-        dataset,
+    # Random shuffle before split
+    random.seed(42)  # Fixed seed for reproducibility
+    random.shuffle(all_files)
+
+    val_ratio = 0.05  # 5% for validation
+    n_val = max(1, int(len(all_files) * val_ratio))
+    n_train = len(all_files) - n_val
+
+    train_files = all_files[:n_train]
+    val_files = all_files[n_train:]
+
+    print(f"[INFO] Data Split: {n_train} Train files, {n_val} Val files.")
+
+    # Dataloaders
+    # Use CPU for dataset loading so workers can function
+    train_dataset = ChunkedDataset(file_list=train_files, device="cpu")
+    val_dataset = ChunkedDataset(
+        file_list=val_files, device="cpu", shuffle_chunks=False
+    )
+
+    train_dataloader = DataLoader(
+        train_dataset,
         batch_size=args.batch_size,
-        num_workers=4,  # Use 4 workers
-        pin_memory=True,  # Speed up CPU->GPU transfer
+        num_workers=4,
+        pin_memory=True,
         prefetch_factor=2,
+    )
+
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        num_workers=2,  # Less workers for val
+        pin_memory=True,
     )
 
     print(f"[INFO] Training started. (Streaming data, Workers: 4)")
