@@ -11,28 +11,10 @@ and strict forward walking commands. Collects:
 import argparse
 import os
 import time
-import torch
-import gymnasium as gym
-from importlib.metadata import version
+import sys
 
+# Import AppLauncher first
 from isaaclab.app import AppLauncher
-import isaaclab_tasks  # noqa: F401
-from isaaclab.utils.dict import print_dict
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
-from isaaclab_tasks.utils import get_checkpoint_path
-from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
-from tensordict import TensorDict
-
-# Import the custom audit config
-# Note: We assume the config is registered or we pass it directly.
-# Since we modified the file, we need to ensure the task registry uses our class or we patch it.
-# For simplicity in this script, we will patch the task config if needed,
-# but better yet, we can use the 'task' argument and let it load, then dynamically swap the cfg.
-# actually, parse_env_cfg loads the config class.
-from unitree_rl_lab.tasks.locomotion.robots.go2.velocity_env_cfg import (
-    RobotDataAuditEnvCfg,
-)
-
 import cli_args  # isort: skip
 
 
@@ -63,6 +45,27 @@ def main():
     app_launcher = AppLauncher(args_cli)
     simulation_app = app_launcher.app
 
+    # ---------------------------------------------------------
+    # Perform other imports AFTER SimulationApp is instantiated
+    # ---------------------------------------------------------
+    import torch
+    import gymnasium as gym
+    from importlib.metadata import version
+    from tensordict import TensorDict
+
+    import isaaclab_tasks  # noqa: F401
+    from isaaclab.utils.dict import print_dict
+    from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
+    from isaaclab_tasks.utils import get_checkpoint_path
+    from rsl_rl.runners import OnPolicyRunner
+
+    from unitree_rl_lab.utils.parser_cfg import parse_env_cfg
+
+    # Import custom audit config
+    from unitree_rl_lab.tasks.locomotion.robots.go2.velocity_env_cfg import (
+        RobotDataAuditEnvCfg,
+    )
+
     # --- Environment Setup ---
     # Load default cfg
     env_cfg = parse_env_cfg(
@@ -73,10 +76,6 @@ def main():
     )
 
     # PATCH: Swap to our Audit Config
-    # We manually copy the audit settings to the loaded instance if we can't easily register a new ID.
-    # Or simpler: Instantiate our config class and copy relevant fields if needed.
-    # But parse_env_cfg returns a specific instance.
-    # Let's try to manually overwrite the crucial parts (terrain and commands) using the class we defined.
     print("[INFO] Applying Audit Environment Configuration...")
     audit_cfg = RobotDataAuditEnvCfg()
     audit_cfg.scene.num_envs = args_cli.num_envs
@@ -193,7 +192,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Fix for RSL-RL runner import if needed, assuming it is available in environment
-    from rsl_rl.runners import OnPolicyRunner
-
     main()
