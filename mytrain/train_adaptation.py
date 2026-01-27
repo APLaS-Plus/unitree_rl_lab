@@ -182,11 +182,19 @@ class ChunkedDataset(torch.utils.data.IterableDataset):
         return 10000000  # Dummy, doesn't affect training loop much except progress bar
 
 
+import json
+
+
 def train(args):
     # Setup logging
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = os.path.join(args.log_dir, timestamp)
     os.makedirs(log_dir, exist_ok=True)
+
+    # Save Hyperparameters
+    with open(os.path.join(log_dir, "params.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
+
     writer = SummaryWriter(log_dir=log_dir)
     print(f"[INFO] Tensorboard logging to: {log_dir}")
 
@@ -393,6 +401,10 @@ def train(args):
             print(
                 f"Epoch {epoch+1}/{args.epochs} | Loss: {avg_loss:.4f} (L: {avg_latent:.4f}, P: {avg_phys:.4f}) | LR: {current_lr:.2e}"
             )
+            # Save Checkpoint
+            ckpt_path = os.path.join(log_dir, f"checkpoint_epoch_{epoch+1:03d}.pt")
+            torch.save(model.state_dict(), ckpt_path)
+            print(f"[INFO] Saved checkpoint: {ckpt_path}")
 
         # Step Scheduler
         scheduler.step()
