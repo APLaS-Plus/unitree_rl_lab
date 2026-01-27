@@ -100,6 +100,7 @@ def train(args):
 
 import glob
 import random
+import math
 
 
 class ChunkedDataset(torch.utils.data.IterableDataset):
@@ -120,22 +121,33 @@ class ChunkedDataset(torch.utils.data.IterableDataset):
         if not self.files:
             raise FileNotFoundError(f"No files found for pattern: {file_pattern}")
 
-        self.device = device
+        self.device = device  # Note: When using num_workers>0, device should usually be 'cpu' here, and to(device) called in loop
         self.shuffle_chunks = shuffle_chunks
 
         print(f"[INFO] ChunkedDataset found {len(self.files)} files.")
 
     def __iter__(self):
-        # Apply shuffling to file order if requested
-        file_order = list(self.files)
+        worker_info = torch.utils.data.get_worker_info()
+
+        if worker_info is None:  # Single-process data loading
+            file_order = list(self.files)
+        else:  # Multi-process data loading, split workload
+            per_worker = int(
+                math.ceil(len(self.files) / float(worker_info.num_workers))
+            )
+            worker_id = worker_info.id
+            iter_start = worker_id * per_worker
+            iter_end = min(iter_start + per_worker, len(self.files))
+            file_order = list(self.files[iter_start:iter_end])
+
         if self.shuffle_chunks:
             random.shuffle(file_order)
 
         for fpath in file_order:
-            # Load chunk
-            # print(f"[DEBUG] Loading chunk {fpath}") # Optional debug
             try:
-                data = torch.load(fpath, map_location=self.device)
+                # Load to CPU first if using workers, or directly to device if 0 workers
+                # Ideally always load to CPU in dataset for separate workers
+                data = torch.load(fpath, map_location="cpu")
 
                 # Assume data structure match
                 obs = data["student_obs"]
@@ -144,7 +156,7 @@ class ChunkedDataset(torch.utils.data.IterableDataset):
 
                 # Shuffle within chunk
                 if self.shuffle_chunks:
-                    perm = torch.randperm(obs.shape[0], device=self.device)
+                    perm = torch.randperm(obs.shape[0])  # CPU shuffle
                     obs = obs[perm]
                     latent = latent[perm]
                     phys = phys[perm]
@@ -229,12 +241,18 @@ def train(args):
     )
 
     # Dataloader
-    dataset = ChunkedDataset(args.data_path, device=args.device)
-    dataloader = DataLoader(
-        dataset, batch_size=args.batch_size
-    )  # No shuffle here, dataset handles it
+    # Use CPU for dataset loading so workers can function
+    dataset = ChunkedDataset(args.data_path, device="cpu")
 
-    print(f"[INFO] Training started. (Streaming data)")
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        num_workers=4,  # Use 4 workers
+        pin_memory=True,  # Speed up CPU->GPU transfer
+        prefetch_factor=2,
+    )
+
+    print(f"[INFO] Training started. (Streaming data, Workers: 4)")
 
     # Aux weight scheduler
     def get_lambda(epoch):
