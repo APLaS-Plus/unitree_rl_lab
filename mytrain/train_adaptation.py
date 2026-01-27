@@ -182,10 +182,6 @@ def train(args):
             loss_phys = criterion(pred_phys, target_phys)
             total_loss = loss_latent + lambda_aux * loss_phys
 
-            # Backward
-            optimizer.zero_grad()
-            total_loss.backward()
-
             # --- Gradient Monitoring (Cosine Similarity) ---
             # Shared encoder is usually 'feature_extractor' or similar in the model.
             # We assume model has a shared backbone. check model structure.
