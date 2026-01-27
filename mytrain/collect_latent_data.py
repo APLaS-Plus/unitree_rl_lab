@@ -132,7 +132,10 @@ def main():
         hook_handle = list(teacher_actor.children())[0].register_forward_hook(hook_fn)
 
     # --- Data Collection Loop ---
-    obs, _ = env.get_observations()
+    if version("rsl-rl-lib").startswith("2.3."):
+        obs, _ = env.get_observations()
+    else:
+        obs = env.get_observations()
 
     student_obs_list = []
     teacher_latent_list = []
