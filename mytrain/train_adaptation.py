@@ -208,40 +208,56 @@ def train(args):
             # This triples backward cost. Maybe do it only every N steps or 1st batch of epoch.
 
             if grad_sim_count == 0:  # Monitor only first batch of epoch
-                # Use autograd.grad to check shared gradients without affecting optimizer state
-                params = list(model.parameters())
+                # 1. Latent Gradients
+                optimizer.zero_grad()
+                loss_latent.backward(retain_graph=True)
 
-                # 1. Grads for Latent
-                # allow_unused=True is crucial because head parameters won't participate in both losses
-                grads_latent = torch.autograd.grad(
-                    loss_latent, params, retain_graph=True, allow_unused=True
-                )
+                grads_latent = []
+                for param in model.parameters():
+                    if param.grad is not None:
+                        grads_latent.append(param.grad.view(-1).clone())
+                    else:
+                        grads_latent.append(
+                            torch.zeros(param.numel(), device=args.device)
+                        )
 
-                # 2. Grads for Phys
-                grads_phys = torch.autograd.grad(
-                    loss_phys, params, retain_graph=True, allow_unused=True
-                )
+                # 2. Phys Gradients
+                optimizer.zero_grad()
+                loss_phys.backward()  # Graph freed here
 
-                # Filter for shared parameters (non-None in both)
-                g1_list = []
-                g2_list = []
-                for g1, g2 in zip(grads_latent, grads_phys):
-                    if g1 is not None and g2 is not None:
-                        g1_list.append(g1.view(-1))
-                        g2_list.append(g2.view(-1))
+                grads_phys = []
+                for param in model.parameters():
+                    if param.grad is not None:
+                        grads_phys.append(param.grad.view(-1).clone())
+                    else:
+                        grads_phys.append(
+                            torch.zeros(param.numel(), device=args.device)
+                        )
 
-                if g1_list:
-                    g1_vec = torch.cat(g1_list)
-                    g2_vec = torch.cat(g2_list)
+                # 3. Compute Cosine Sim
+                g1_vec = torch.cat(grads_latent)
+                g2_vec = torch.cat(grads_phys)
+
+                # Avoid zero vectors
+                if g1_vec.norm() > 1e-6 and g2_vec.norm() > 1e-6:
                     cos_sim = nn.functional.cosine_similarity(
                         g1_vec.unsqueeze(0), g2_vec.unsqueeze(0)
                     ).item()
                     grad_sim_sum += cos_sim
                     grad_sim_count += 1
 
-                # Standard backward for updates (graph is retained so this is safe)
-                optimizer.zero_grad()
-                total_loss.backward()
+                # 4. Combine Gradients for Update: total_grad = grad_latent + lambda * grad_phys
+                # Currently p.grad contains grad_phys
+                with torch.no_grad():
+                    idx = 0
+                    for param in model.parameters():
+                        if param.grad is not None:
+                            # param.grad = param.grad * lambda + grad_latent
+                            param.grad.mul_(lambda_aux).add_(
+                                grads_latent[idx].view_as(param.grad)
+                            )
+                        idx += 1
+
                 optimizer.step()
             else:
                 optimizer.zero_grad()
