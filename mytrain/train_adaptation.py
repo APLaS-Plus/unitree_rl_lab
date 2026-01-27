@@ -177,45 +177,46 @@ class ChunkedDataset(torch.utils.data.IterableDataset):
         # Approximate length (sum of file sizes / sample size) or just arbitrary
         # We can try to peek at first file and multiply
         # But IterableDataset doesn't enforce __len__.
-        # We return a dummy high number or try to estimate if possible.
-        # For simplicity, let's just return a placeholder or calculate once.
-        return 10000000  # Dummy, doesn't affect training loop much except progress bar
-
-
-import json
-
+        # We return a dummy high numbdef load_stats(stats_path, device):
+    """Load pre-computed stats."""
+    print(f"[INFO] Loading stats from: {stats_path}")
+    stats = torch.load(stats_path, map_location=device)
+    
+    latent_mean = stats["mean"].to(device)
+    latent_std = stats["std"].to(device)
+    latent_std[latent_std < 1e-6] = 1.0
+    
+    # Check for Phys Stats (added in new analysis version)
+    if "phys_mean" in stats:
+        phys_mean = stats["phys_mean"].to(device)
+        phys_std = stats["phys_std"].to(device)
+        phys_std[phys_std < 1e-6] = 1.0
+        print("[INFO] Found physical parameter statistics.")
+    else:
+        print("[WARNING] No physical parameter statistics found. Using identity normalization.")
+        phys_mean = torch.zeros(1, device=device)
+        phys_std = torch.ones(1, device=device)
+        
+    return latent_mean, latent_std, phys_mean, phys_std
 
 def train(args):
     # Setup logging
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir = os.path.join(args.log_dir, timestamp)
     os.makedirs(log_dir, exist_ok=True)
-
+    
     # Save Hyperparameters
     with open(os.path.join(log_dir, "params.json"), "w") as f:
         json.dump(vars(args), f, indent=4)
-
+        
     writer = SummaryWriter(log_dir=log_dir)
     print(f"[INFO] Tensorboard logging to: {log_dir}")
-
+    
     # Check data files
     # We delay loading to dataset init
 
     # Prepare Normalization Stats
-    latent_mean, latent_std = load_stats(args.stats_path, args.device)
-
-    # Phys Stats (Compute locally or simpler: just use identity or assume stats passed)
-    # Since we can't easily compute mean/std over streaming data without a pre-pass,
-    # we will use the same stats file!
-    # NOTE: The user's analysis script now should save stats.
-    # We need to make sure we load phys stats if available?
-    # Current load_stats only loads latent.
-    # Let's assume for now we reuse latent stats file to store phys stats too if we update analysis.
-    # OR, we compute phys stats on the fly (Exponential Moving Average) - too complex.
-    # Simple fix: We calculate Phys stats in Analysis script too! (I should add that to Analysis script task).
-    # For this iteration, let's use a rough estimate or 0 mean 1 std for Phys if not found.
-    phys_mean = torch.zeros(1, device=args.device)
-    phys_std = torch.ones(1, device=args.device)
+    latent_mean, latent_std, phys_mean, phys_std = load_stats(args.stats_path, args.device)
 
     # Dimensions - Peek at first file
     first_file = sorted(glob.glob(args.data_path.replace(".pt", "_chunk*.pt")))[0]
@@ -282,7 +283,7 @@ def train(args):
         grad_sim_sum = 0.0
         grad_sim_count = 0
 
-        for obs, target_latent_raw, target_phys_raw in dataloader:
+        for obs, target_latent_raw, target_phys_raw in train_dataloader:
             obs = obs.to(args.device)
             target_latent_raw = target_latent_raw.to(args.device)
             target_phys_raw = target_phys_raw.to(args.device)
@@ -329,9 +330,7 @@ def train(args):
                     if param.grad is not None:
                         grads_latent.append(param.grad.view(-1).clone())
                     else:
-                        grads_latent.append(
-                            torch.zeros(param.numel(), device=args.device)
-                        )
+                        grads_latent.append(torch.zeros(param.numel(), device=args.device))
 
                 # 2. Phys Gradients
                 optimizer.zero_grad()
@@ -342,9 +341,7 @@ def train(args):
                     if param.grad is not None:
                         grads_phys.append(param.grad.view(-1).clone())
                     else:
-                        grads_phys.append(
-                            torch.zeros(param.numel(), device=args.device)
-                        )
+                        grads_phys.append(torch.zeros(param.numel(), device=args.device))
 
                 # 3. Compute Cosine Sim
                 g1_vec = torch.cat(grads_latent)
@@ -365,9 +362,7 @@ def train(args):
                     for param in model.parameters():
                         if param.grad is not None:
                             # param.grad = param.grad * lambda + grad_latent
-                            param.grad.mul_(lambda_aux).add_(
-                                grads_latent[idx].view_as(param.grad)
-                            )
+                            param.grad.mul_(lambda_aux).add_(grads_latent[idx].view_as(param.grad))
                         idx += 1
 
                 optimizer.step()
@@ -380,27 +375,60 @@ def train(args):
             epoch_latent_loss += loss_latent.item()
             epoch_phys_loss += loss_phys.item()
 
-        # Averages
-        avg_loss = epoch_loss / len(dataloader)
-        avg_latent = epoch_latent_loss / len(dataloader)
-        avg_phys = epoch_phys_loss / len(dataloader)
+        # Averages Train
+        avg_loss = epoch_loss / max(1, len(train_dataloader))
+        avg_latent = epoch_latent_loss / max(1, len(train_dataloader))
+        avg_phys = epoch_phys_loss / max(1, len(train_dataloader))
+        avg_grad_sim = grad_sim_sum / max(1, grad_sim_count)
 
-        # Logging
+        # Logging Train
         writer.add_scalar("Loss/Total", avg_loss, epoch)
         writer.add_scalar("Loss/Latent", avg_latent, epoch)
         writer.add_scalar("Loss/Phys", avg_phys, epoch)
-        writer.add_scalar("Curriculum/Lambda", lambda_aux, epoch)
-        writer.add_scalar("Training/LR", current_lr, epoch)
-
+        writer.add_scalar("Monitoring/LambdaAux", lambda_aux, epoch)
+        writer.add_scalar("Monitoring/LR", current_lr, epoch)
         if grad_sim_count > 0:
-            writer.add_scalar(
-                "Monitoring/GradCosineSim", grad_sim_sum / grad_sim_count, epoch
-            )
+            writer.add_scalar("Monitoring/GradCosineSim", avg_grad_sim, epoch)
+            
+        # --- Validation Loop ---
+        model.eval()
+        val_loss = 0.0
+        val_latent = 0.0
+        val_phys = 0.0
+        
+        with torch.no_grad():
+            for obs, target_latent_raw, target_phys_raw in val_dataloader:
+                obs = obs.to(args.device)
+                target_latent_raw = target_latent_raw.to(args.device)
+                target_phys_raw = target_phys_raw.to(args.device)
+                
+                target_latent = (target_latent_raw - latent_mean) / latent_std
+                target_phys = (target_phys_raw - phys_mean) / phys_std
+                
+                pred_latent, pred_phys = model(obs)
+                
+                l_latent = criterion(pred_latent, target_latent)
+                l_phys = criterion(pred_phys, target_phys)
+                t_loss = l_latent + lambda_aux * l_phys
+                
+                val_loss += t_loss.item()
+                val_latent += l_latent.item()
+                val_phys += l_phys.item()
+        
+        avg_val_loss = val_loss / max(1, len(val_dataloader))
+        avg_val_latent_loss = val_latent / max(1, len(val_dataloader))
+        avg_val_phys_loss = val_phys / max(1, len(val_dataloader))
+        
+        writer.add_scalar("Val/Loss_Total", avg_val_loss, epoch)
+        writer.add_scalar("Val/Loss_Latent", avg_val_latent_loss, epoch)
+        writer.add_scalar("Val/Loss_Phys", avg_val_phys_loss, epoch)
 
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 1 == 0:
             print(
-                f"Epoch {epoch+1}/{args.epochs} | Loss: {avg_loss:.4f} (L: {avg_latent:.4f}, P: {avg_phys:.4f}) | LR: {current_lr:.2e}"
+                f"Epoch {epoch+1}/{args.epochs} | Train: {avg_loss:.4f} | Val: {avg_val_loss:.4f} (L: {avg_val_latent_loss:.4f}) | LR: {current_lr:.2e}"
             )
+            
+        if (epoch + 1) % 10 == 0:
             # Save Checkpoint
             ckpt_path = os.path.join(log_dir, f"checkpoint_epoch_{epoch+1:03d}.pt")
             torch.save(model.state_dict(), ckpt_path)

@@ -42,21 +42,36 @@ def compute_stats_incremental(file_paths, device="cpu"):
     # Let's do: Mean = Sum / N, Std = sqrt(SumSq/N - Mean^2)
     sum_z = 0
     sum_sq_z = 0
+
+    sum_p = 0
+    sum_sq_p = 0
+
     total_samples = 0
 
     for fpath in file_paths:
         data = torch.load(fpath)
-        z_t = data["teacher_latent"].to(device)  # (N, dim)
+        z_t = data["teacher_latent"].to(device)  # (N, latent_dim)
+        phys = data["phys_params"].to(device)  # (N, phys_dim)
 
         sum_z += torch.sum(z_t, dim=0)
         sum_sq_z += torch.sum(z_t**2, dim=0)
+
+        sum_p += torch.sum(phys, dim=0)
+        sum_sq_p += torch.sum(phys**2, dim=0)
+
         total_samples += z_t.shape[0]
 
-    mean = sum_z / total_samples
-    variance = (sum_sq_z / total_samples) - (mean**2)
-    std = torch.sqrt(torch.clamp(variance, min=1e-6))
+    # Latent Stats
+    mean_z = sum_z / total_samples
+    var_z = (sum_sq_z / total_samples) - (mean_z**2)
+    std_z = torch.sqrt(torch.clamp(var_z, min=1e-6))
 
-    return mean, std, total_samples
+    # Phys Stats
+    mean_p = sum_p / total_samples
+    var_p = (sum_sq_p / total_samples) - (mean_p**2)
+    std_p = torch.sqrt(torch.clamp(var_p, min=1e-6))
+
+    return mean_z, std_z, mean_p, std_p, total_samples
 
 
 def analyze(data_path_pattern, output_dir):
@@ -82,16 +97,25 @@ def analyze(data_path_pattern, output_dir):
 
     # 2. Statistics (Incremental)
     device = "cpu"  # sufficient for stats
-    mean, std, total_samples = compute_stats_incremental(files, device)
+    mean_z, std_z, mean_p, std_p, total_samples = compute_stats_incremental(
+        files, device
+    )
 
     print("\n--- Latent Statistics ---")
     print(f"Total Samples: {total_samples}")
-    print(f"Mean: {mean}")
-    print(f"Std:  {std}")
+    print(f"Mean: {mean_z}")
+    print(f"Std:  {std_z}")
+
+    print("\n--- Phys Statistics ---")
+    print(f"Mean: {mean_p}")
+    print(f"Std:  {std_p}")
 
     # Save stats
     stats_path = os.path.join(output_dir, "latent_stats.pt")
-    torch.save({"mean": mean, "std": std}, stats_path)
+    torch.save(
+        {"mean": mean_z, "std": std_z, "phys_mean": mean_p, "phys_std": std_p},
+        stats_path,
+    )
     print(f"[INFO] Saved stats to {stats_path}")
 
     # 3. PCA Analysis (Sampled)
