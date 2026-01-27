@@ -27,7 +27,7 @@ parser.add_argument(
 parser.add_argument(
     "--video_length",
     type=int,
-    default=200,
+    default=400,
     help="Length of the recorded video (in steps).",
 )
 parser.add_argument(
