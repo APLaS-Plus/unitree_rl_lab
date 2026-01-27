@@ -173,22 +173,49 @@ def main():
             if (step + 1) % 100 == 0:
                 print(f"Step {step+1}/{args_cli.max_steps}")
 
-    # --- Save Data ---
-    os.makedirs(os.path.dirname(args_cli.data_save_path), exist_ok=True)
+            # --- Chunk Saving ---
+            # Save every 500 steps (approx 2M samples if num_envs=4096, adjust as needed)
+            # Actually with 4096 envs, 100 steps = 409k samples.
+            # Let's save every 200 steps to contain memory usage.
+            save_interval = 200
+            if (step + 1) % save_interval == 0:
+                chunk_idx = (step + 1) // save_interval
+                save_path = args_cli.data_save_path.replace(
+                    ".pt", f"_chunk{chunk_idx:03d}.pt"
+                )
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-    data = {
-        "student_obs": torch.cat(student_obs_list, dim=0),
-        "teacher_latent": torch.cat(teacher_latent_list, dim=0),
-        "phys_params": torch.cat(phys_params_list, dim=0),
-        # Save config info if useful
-        "velocity_range": [0.5, 1.0],
-        "terrains": "audit_mix",
-    }
+                data_chunk = {
+                    "student_obs": torch.cat(student_obs_list, dim=0),
+                    "teacher_latent": torch.cat(teacher_latent_list, dim=0),
+                    "phys_params": torch.cat(phys_params_list, dim=0),
+                    "velocity_range": [0.5, 1.0],
+                    "terrains": "audit_mix",
+                }
+                torch.save(data_chunk, save_path)
+                print(
+                    f"[INFO] Saved chunk {chunk_idx} to {save_path} ({len(data_chunk['student_obs'])} samples)"
+                )
 
-    torch.save(data, args_cli.data_save_path)
-    print(
-        f"[INFO] Saved {len(data['student_obs'])} samples to {args_cli.data_save_path}"
-    )
+                # Clear lists to free memory
+                student_obs_list = []
+                teacher_latent_list = []
+                phys_params_list = []
+
+    # Save remaining data if any
+    if student_obs_list:
+        chunk_idx = (args_cli.max_steps // save_interval) + 1
+        save_path = args_cli.data_save_path.replace(".pt", f"_chunk{chunk_idx:03d}.pt")
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        data_chunk = {
+            "student_obs": torch.cat(student_obs_list, dim=0),
+            "teacher_latent": torch.cat(teacher_latent_list, dim=0),
+            "phys_params": torch.cat(phys_params_list, dim=0),
+            "velocity_range": [0.5, 1.0],
+            "terrains": "audit_mix",
+        }
+        torch.save(data_chunk, save_path)
+        print(f"[INFO] Saved final chunk {chunk_idx} to {save_path}")
 
     env.close()
     simulation_app.close()

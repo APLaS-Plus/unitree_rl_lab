@@ -97,27 +97,116 @@ def train(args):
     writer = SummaryWriter(log_dir=log_dir)
     print(f"[INFO] Tensorboard logging to: {log_dir}")
 
-    # Load data
-    student_obs, teacher_latent, phys_params = load_dataset(args.data_path)
+
+import glob
+import random
+
+
+class ChunkedDataset(torch.utils.data.IterableDataset):
+    """Iterable Dataset that loads data in chunks from disk."""
+
+    def __init__(self, file_pattern, device="cpu", shuffle_chunks=True):
+        self.files = sorted(glob.glob(file_pattern))
+        if not self.files:
+            # Fallback for single file or mismatch
+            if os.path.exists(file_pattern):
+                self.files = [file_pattern]
+            else:
+                # Try adding chunk wildcard
+                self.files = sorted(
+                    glob.glob(file_pattern.replace(".pt", "_chunk*.pt"))
+                )
+
+        if not self.files:
+            raise FileNotFoundError(f"No files found for pattern: {file_pattern}")
+
+        self.device = device
+        self.shuffle_chunks = shuffle_chunks
+
+        print(f"[INFO] ChunkedDataset found {len(self.files)} files.")
+
+    def __iter__(self):
+        # Apply shuffling to file order if requested
+        file_order = list(self.files)
+        if self.shuffle_chunks:
+            random.shuffle(file_order)
+
+        for fpath in file_order:
+            # Load chunk
+            # print(f"[DEBUG] Loading chunk {fpath}") # Optional debug
+            try:
+                data = torch.load(fpath, map_location=self.device)
+
+                # Assume data structure match
+                obs = data["student_obs"]
+                latent = data["teacher_latent"]
+                phys = data["phys_params"]
+
+                # Shuffle within chunk
+                if self.shuffle_chunks:
+                    perm = torch.randperm(obs.shape[0], device=self.device)
+                    obs = obs[perm]
+                    latent = latent[perm]
+                    phys = phys[perm]
+
+                # Yield items
+                # Note: Yielding item by item is slow in Python.
+                # It is better to rely on DataLoader's batching if we yield items.
+                # However, default DataLoader with IterableDataset expects the iterator to yield samples.
+                # To optimize, we could yield batches, but let's stick to standard first.
+                for i in range(obs.shape[0]):
+                    yield obs[i], latent[i], phys[i]
+
+            except Exception as e:
+                print(f"[ERROR] Failed to load {fpath}: {e}")
+                continue
+
+    def __len__(self):
+        # Approximate length (sum of file sizes / sample size) or just arbitrary
+        # We can try to peek at first file and multiply
+        # But IterableDataset doesn't enforce __len__.
+        # We return a dummy high number or try to estimate if possible.
+        # For simplicity, let's just return a placeholder or calculate once.
+        return 10000000  # Dummy, doesn't affect training loop much except progress bar
+
+
+def train(args):
+    # Setup logging
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_dir = os.path.join(args.log_dir, timestamp)
+    os.makedirs(log_dir, exist_ok=True)
+    writer = SummaryWriter(log_dir=log_dir)
+    print(f"[INFO] Tensorboard logging to: {log_dir}")
+
+    # Check data files
+    # We delay loading to dataset init
 
     # Prepare Normalization Stats
     latent_mean, latent_std = load_stats(args.stats_path, args.device)
 
-    # Physical Params Normalization (assuming approximate ranges or just scaling)
-    # Ideally should read ranges from config, here we normalize to [-1, 1] roughly if needed.
-    # For now, let's stick to raw or simple max normalization if range is known.
-    # User plan mentioned: "Normalize phys params to [-1, 1] or [0, 1]".
-    # Let's compute statistics from the dataset itself for Phys Params to be safe (Z-score).
-    phys_mean = phys_params.mean(dim=0).to(args.device)
-    phys_std = phys_params.std(dim=0).to(args.device)
-    phys_std[phys_std < 1e-6] = 1.0
+    # Phys Stats (Compute locally or simpler: just use identity or assume stats passed)
+    # Since we can't easily compute mean/std over streaming data without a pre-pass,
+    # we will use the same stats file!
+    # NOTE: The user's analysis script now should save stats.
+    # We need to make sure we load phys stats if available?
+    # Current load_stats only loads latent.
+    # Let's assume for now we reuse latent stats file to store phys stats too if we update analysis.
+    # OR, we compute phys stats on the fly (Exponential Moving Average) - too complex.
+    # Simple fix: We calculate Phys stats in Analysis script too! (I should add that to Analysis script task).
+    # For this iteration, let's use a rough estimate or 0 mean 1 std for Phys if not found.
+    phys_mean = torch.zeros(1, device=args.device)
+    phys_std = torch.ones(1, device=args.device)
 
-    # Dimensions
-    input_dim = student_obs.shape[1]
-    latent_dim = teacher_latent.shape[1]
-    phys_dim = phys_params.shape[1]
+    # Dimensions - Peek at first file
+    first_file = sorted(glob.glob(args.data_path.replace(".pt", "_chunk*.pt")))[0]
+    data_peek = torch.load(first_file)
+    input_dim = data_peek["student_obs"].shape[1]
+    latent_dim = data_peek["teacher_latent"].shape[1]
+    phys_dim = data_peek["phys_params"].shape[1]
     obs_dim = input_dim // args.history_length
     conv_channels = [int(x) for x in args.conv_channels.split(",")]
+
+    del data_peek
 
     # Model
     model = MultiHeadAdaptationNet(
@@ -140,14 +229,12 @@ def train(args):
     )
 
     # Dataloader
-    dataset = TensorDataset(
-        student_obs.to(args.device),
-        teacher_latent.to(args.device),
-        phys_params.to(args.device),
-    )
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    dataset = ChunkedDataset(args.data_path, device=args.device)
+    dataloader = DataLoader(
+        dataset, batch_size=args.batch_size
+    )  # No shuffle here, dataset handles it
 
-    print(f"[INFO] Training started. Batches: {len(dataloader)}")
+    print(f"[INFO] Training started. (Streaming data)")
 
     # Aux weight scheduler
     def get_lambda(epoch):

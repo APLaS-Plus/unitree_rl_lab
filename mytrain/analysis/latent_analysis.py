@@ -13,24 +13,79 @@ import os
 import argparse
 
 
-def analyze(data_path, output_dir):
+import glob
+
+
+def compute_stats_incremental(file_paths, device="cpu"):
+    """Compute mean and std incrementally to save memory."""
+    count = 0
+    mean = None
+    m2 = None  # Sum of squares of differences from the current mean
+
+    print(f"[INFO] Computing stats over {len(file_paths)} chunks...")
+
+    for fpath in file_paths:
+        data = torch.load(fpath)
+        z_t = data["teacher_latent"].to(device)
+        n = z_t.shape[0]
+
+        if count == 0:
+            mean = torch.zeros_like(z_t[0])
+            m2 = torch.zeros_like(z_t[0])
+
+        # Welford's online algorithm (vectorized for batch)
+        # However, for batch updates, standard sum accumulation is numerically stable enough for this scale
+        # Let's use standard sum accumulation for simplicity and speed
+        pass
+
+    # Re-loop for simple sum/sq_sum (Welford is tricky for batches without caveats)
+    # Let's do: Mean = Sum / N, Std = sqrt(SumSq/N - Mean^2)
+    sum_z = 0
+    sum_sq_z = 0
+    total_samples = 0
+
+    for fpath in file_paths:
+        data = torch.load(fpath)
+        z_t = data["teacher_latent"].to(device)  # (N, dim)
+
+        sum_z += torch.sum(z_t, dim=0)
+        sum_sq_z += torch.sum(z_t**2, dim=0)
+        total_samples += z_t.shape[0]
+
+    mean = sum_z / total_samples
+    variance = (sum_sq_z / total_samples) - (mean**2)
+    std = torch.sqrt(torch.clamp(variance, min=1e-6))
+
+    return mean, std, total_samples
+
+
+def analyze(data_path_pattern, output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    print(f"[INFO] Loading data from {data_path}")
-    data = torch.load(data_path)
 
-    # Extract data
-    # student_obs = data["student_obs"]
-    z_t = data["teacher_latent"]  # (N, latent_dim)
-    # phys_params = data["phys_params"]
+    # 1. Find files
+    # pattern can be "dataset/teacher_latent_10M_chunk*.pt" or just the base path
+    if "*" not in data_path_pattern and "_chunk" not in data_path_pattern:
+        # Assume it's a prefix or exact file. If exact file exists, use it.
+        if os.path.exists(data_path_pattern):
+            files = [data_path_pattern]
+        else:
+            # Try adding wildcard
+            files = sorted(glob.glob(data_path_pattern.replace(".pt", "_chunk*.pt")))
+    else:
+        files = sorted(glob.glob(data_path_pattern))
 
-    latent_dim = z_t.shape[1]
-    print(f"[INFO] Latent Shape: {z_t.shape}")
+    if not files:
+        print(f"[ERROR] No files found matching {data_path_pattern}")
+        return
 
-    # 1. Statistics
-    mean = torch.mean(z_t, dim=0)
-    std = torch.std(z_t, dim=0)
+    print(f"[INFO] Found {len(files)} data files.")
+
+    # 2. Statistics (Incremental)
+    device = "cpu"  # sufficient for stats
+    mean, std, total_samples = compute_stats_incremental(files, device)
 
     print("\n--- Latent Statistics ---")
+    print(f"Total Samples: {total_samples}")
     print(f"Mean: {mean}")
     print(f"Std:  {std}")
 
@@ -39,10 +94,28 @@ def analyze(data_path, output_dir):
     torch.save({"mean": mean, "std": std}, stats_path)
     print(f"[INFO] Saved stats to {stats_path}")
 
-    # 2. PCA Analysis
-    print("\n--- PCA Analysis ---")
+    # 3. PCA Analysis (Sampled)
+    # Load a subset for PCA (e.g., first 100k samples or random chunks)
+    # Loading first 2 chunks is usually diverse enough if shuffled, but
+    # to be safe, let's just load the first chunk or up to 50k samples
+    print("\n--- PCA Analysis (Sampled) ---")
+
+    z_t_sampled = []
+    samples_needed = 50000
+    samples_collected = 0
+
+    for fpath in files:
+        data = torch.load(fpath)
+        z_t = data["teacher_latent"]
+        z_t_sampled.append(z_t)
+        samples_collected += z_t.shape[0]
+        if samples_collected >= samples_needed:
+            break
+
+    z_t_all = torch.cat(z_t_sampled, dim=0)[:samples_needed]
+
     # Centralize
-    X = z_t.cpu().numpy()
+    X = z_t_all.cpu().numpy()
     X_centered = X - np.mean(X, axis=0)
 
     # SVD
@@ -58,16 +131,14 @@ def analyze(data_path, output_dir):
     print(f"Cumulative Variance: {cumulative_variance}")
 
     # Projection to 2D
-    # PCA components are rows of Vt
     components = Vt[:2, :]
     projected = X_centered @ components.T
 
-    # 3. Visualization
-    os.makedirs(output_dir, exist_ok=True)
-
+    # 4. Visualization
     fig, axes = plt.subplots(1, 2, figsize=(15, 6))
 
     # Plot 1: Cumulative Variance
+    latent_dim = X.shape[1]
     axes[0].plot(
         range(1, latent_dim + 1), cumulative_variance, marker="o", linestyle="-"
     )
@@ -79,14 +150,10 @@ def analyze(data_path, output_dir):
     axes[0].legend()
 
     # Plot 2: 2D Projection
-    # Since we don't strictly have terrain labels per sample in the simple collection (improving this would require storing terrain ID),
-    # we will just plot the density or simple scatter.
-    # If the user implemented terrain ID logging, we would color by it.
-    # For now, we assume "terrain diversity" implies effective clustering if the teacher is robust.
     axes[1].scatter(projected[:, 0], projected[:, 1], alpha=0.5, s=1)
     axes[1].set_xlabel("PC1")
     axes[1].set_ylabel("PC2")
-    axes[1].set_title("Latent Space 2D Projection (PCA)")
+    axes[1].set_title(f"Latent Space 2D Projection (First {samples_needed} samples)")
     axes[1].grid(True)
 
     plt.tight_layout()
@@ -94,13 +161,14 @@ def analyze(data_path, output_dir):
     plt.savefig(plot_path)
     print(f"[INFO] Saved PCA plot to {plot_path}")
 
-    # plt.show() # Disabled for headless environment
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data_path", type=str, default="dataset/teacher_latent_stats.pt"
+        "--data_path",
+        type=str,
+        default="dataset/teacher_latent_stats.pt",
+        help="Path pattern (e.g. dataset/dataset_chunk*.pt)",
     )
     parser.add_argument("--output_dir", type=str, default="dataset/analysis")
     args = parser.parse_args()
