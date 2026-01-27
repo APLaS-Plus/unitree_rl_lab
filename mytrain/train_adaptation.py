@@ -24,10 +24,16 @@ from models import MultiHeadAdaptationNet
 def parse_args():
     parser = argparse.ArgumentParser(description="Train Multi-Head Adaptation Network.")
     parser.add_argument(
-        "--data_path", type=str, required=True, help="Path to collected dataset (.pt)."
+        "--data_path",
+        type=str,
+        default="dataset/teacher_latent_stats.pt",
+        help="Path to collected dataset (.pt).",
     )
     parser.add_argument(
-        "--stats_path", type=str, required=True, help="Path to latent stats (.pt)."
+        "--stats_path",
+        type=str,
+        default="dataset/analysis/latent_stats.pt",
+        help="Path to latent stats (.pt).",
     )
     parser.add_argument(
         "--epochs", type=int, default=100, help="Number of training epochs."
