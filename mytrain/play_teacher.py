@@ -42,7 +42,7 @@ parser.add_argument(
     help="Length of the recorded video (in steps).",
 )
 parser.add_argument(
-    "--num_envs", type=int, default=None, help="Number of environments to simulate."
+    "--num_envs", type=int, default=20, help="Number of environments to simulate."
 )
 parser.add_argument(
     "--task",
@@ -54,7 +54,7 @@ parser.add_argument(
 parser.add_argument(
     "--real-time",
     action="store_true",
-    default=False,
+    default=True,
     help="Run in real-time, if possible.",
 )
 parser.add_argument("--max_steps", type=int, default=1000, help="Maximum steps to run.")

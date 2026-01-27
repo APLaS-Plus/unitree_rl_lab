@@ -78,16 +78,16 @@ APLAS_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.1),
         "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.2, noise_range=(0.01, 0.25), noise_step=0.01, border_width=0.2
+            proportion=0.2, noise_range=(0.01, 0.15), noise_step=0.01, border_width=0.2
         ),
         "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
-            proportion=0.2,
+            proportion=0.1,
             slope_range=(0.0, 0.4),
             platform_width=2.0,
             border_width=0.2,
         ),
         "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
-            proportion=0.2,
+            proportion=0.1,
             slope_range=(0.0, 0.4),
             platform_width=2.0,
             border_width=0.2,
@@ -103,22 +103,22 @@ APLAS_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
             grid_height_range=(0.05, 0.2),
             platform_width=2.0,
         ),
-        # "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
-        #     proportion=0.1,
-        #     step_height_range=(0.05, 0.23),
-        #     step_width=0.3,
-        #     platform_width=2.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
-        # "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
-        #     proportion=0.1,
-        #     step_height_range=(0.05, 0.23),
-        #     step_width=0.3,
-        #     platform_width=2.0,
-        #     border_width=1.0,
-        #     holes=False,
-        # ),
+        "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.1,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=2.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.1,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=2.0,
+            border_width=1.0,
+            holes=False,
+        ),
     },
 )
 
@@ -133,7 +133,7 @@ class RobotSceneCfg(InteractiveSceneCfg):
         terrain_type="generator",  # "plane", "generator"
         # terrain_generator=COBBLESTONE_ROAD_CFG,  # None, ROUGH_TERRAINS_CFG
         terrain_generator=APLAS_TERRAIN_CFG,
-        max_init_terrain_level=1,
+        max_init_terrain_level=9,  # 允许在难度0-9的地形上初始化，看到所有地形类型
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -541,12 +541,14 @@ class TerminationsCfg:
         },
     )
     # RMA uses 0.2 rad for training, 0.8 for eval. We use 0.4 as a balance.
-    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.4})
+    # 这个不能设置太小，不然遇到一些楼梯直接走了就死
+    bad_orientation = DoneTerm(func=mdp.bad_orientation, params={"limit_angle": 0.6})
     # Prevent crouching: terminate if base drops below 0.24m (Go2 standing ~0.35m)
-    low_height = DoneTerm(
-        func=mdp.root_height_below_minimum,
-        params={"minimum_height": 0.24},
-    )
+    # 这个对训练有影响，对于部分地形出生就是死亡，这是isaaclab的bug
+    # low_height = DoneTerm(
+    #     func=mdp.root_height_below_minimum,
+    #     params={"minimum_height": 0.24},
+    # )
 
 
 @configclass
@@ -597,7 +599,7 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         lookat=(0.0, 0.0, 0.0),  # 观察目标点（相对于机器人）
         origin_type="asset_root",  # 相机跟踪资产根节点
         asset_name="robot",  # 跟踪的资产名称（在 scene 中定义的）
-        env_index=2000,
+        env_index=4000,
     )
 
     def __post_init__(self):
@@ -637,9 +639,9 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
 class RobotPlayEnvCfg(RobotEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.scene.num_envs = 32
-        self.scene.terrain.terrain_generator.num_rows = 2
-        self.scene.terrain.terrain_generator.num_cols = 1
+        self.scene.num_envs = 64
+        self.scene.terrain.terrain_generator.num_rows = 4  # 4行地形，增加多样性
+        self.scene.terrain.terrain_generator.num_cols = 10  # 8列地形，确保能看到所有类型
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
 
 
