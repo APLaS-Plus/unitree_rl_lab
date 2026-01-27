@@ -73,23 +73,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_dataset(data_path: str):
-    print(f"[INFO] Loading dataset from: {data_path}")
-    data = torch.load(data_path)
-    return data["student_obs"], data["teacher_latent"], data["phys_params"]
-
-
-def load_stats(stats_path: str, device: str):
-    """Load Teacher z_t statistics for normalization."""
-    print(f"[INFO] Loading stats from: {stats_path}")
-    stats = torch.load(stats_path)
-    mean = stats["mean"].to(device)
-    std = stats["std"].to(device)
-    # Avoid div by zero
-    std[std < 1e-6] = 1.0
-    return mean, std
-
-
 def train(args):
     # Setup logging
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -107,17 +90,20 @@ import math
 class ChunkedDataset(torch.utils.data.IterableDataset):
     """Iterable Dataset that loads data in chunks from disk."""
 
-    def __init__(self, file_pattern, device="cpu", shuffle_chunks=True):
-        self.files = sorted(glob.glob(file_pattern))
-        if not self.files:
-            # Fallback for single file or mismatch
-            if os.path.exists(file_pattern):
-                self.files = [file_pattern]
-            else:
-                # Try adding chunk wildcard
-                self.files = sorted(
-                    glob.glob(file_pattern.replace(".pt", "_chunk*.pt"))
-                )
+    def __init__(self, file_pattern=None, file_list=None, device="cpu", shuffle_chunks=True):
+        if file_list is not None:
+            self.files = file_list
+        else:
+            self.files = sorted(glob.glob(file_pattern))
+            if not self.files:
+                # Fallback for single file or mismatch
+                if os.path.exists(file_pattern):
+                    self.files = [file_pattern]
+                else:
+                    # Try adding chunk wildcard
+                    self.files = sorted(
+                        glob.glob(file_pattern.replace(".pt", "_chunk*.pt"))
+                    )
 
         if not self.files:
             raise FileNotFoundError(f"No files found for pattern: {file_pattern}")
