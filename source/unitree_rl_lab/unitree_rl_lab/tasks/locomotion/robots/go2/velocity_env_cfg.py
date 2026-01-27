@@ -609,7 +609,14 @@ class RobotEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
-        self.sim.physx.gpu_max_rigid_patch_count = 10 * 2**15
+        self.sim.physx.gpu_max_rigid_patch_count = 20 * 2**15
+
+        self.sim.physx.gpu_found_lost_pairs_capacity = 8 * 1024 * 1024
+        self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 8 * 1024 * 1024
+        self.sim.physx.gpu_total_aggregate_pairs_capacity = 8 * 1024 * 1024
+        self.sim.physx.gpu_heap_capacity = 256 * 1024 * 1024
+        self.sim.physx.gpu_temp_buffer_capacity = 64 * 1024 * 1024
+        self.sim.physx.gpu_max_rigid_contact_count = 2**24
 
         # update sensor update periods
         # we tick all the sensors based on the smallest update period (physics update period)
@@ -634,3 +641,87 @@ class RobotPlayEnvCfg(RobotEnvCfg):
         self.scene.terrain.terrain_generator.num_rows = 2
         self.scene.terrain.terrain_generator.num_cols = 1
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
+
+
+## Audit terrain (Mixed terrains for data collection)
+AUDIT_TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    difficulty_range=(0.0, 1.0),
+    use_cache=False,
+    sub_terrains={
+        "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.1),
+        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=0.15, noise_range=(0.01, 0.1), noise_step=0.01, border_width=0.2
+        ),
+        "hf_pyramid_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
+            proportion=0.15,
+            slope_range=(0.0, 0.4),
+            platform_width=2.0,
+            border_width=0.2,
+        ),
+        "hf_pyramid_slope_inv": terrain_gen.HfInvertedPyramidSlopedTerrainCfg(
+            proportion=0.15,
+            slope_range=(0.0, 0.4),
+            platform_width=2.0,
+            border_width=0.2,
+        ),
+        "waves": terrain_gen.HfWaveTerrainCfg(
+            proportion=0.1,
+            amplitude_range=(0.01, 0.3),
+            border_width=0.2,
+        ),
+        "boxes": terrain_gen.MeshRandomGridTerrainCfg(
+            proportion=0.1,
+            grid_width=0.45,
+            grid_height_range=(0.05, 0.2),
+            platform_width=2.0,
+        ),
+        "pyramid_stairs": terrain_gen.MeshPyramidStairsTerrainCfg(
+            proportion=0.125,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=2.0,
+            border_width=1.0,
+            holes=False,
+        ),
+        "pyramid_stairs_inv": terrain_gen.MeshInvertedPyramidStairsTerrainCfg(
+            proportion=0.125,
+            step_height_range=(0.05, 0.23),
+            step_width=0.3,
+            platform_width=2.0,
+            border_width=1.0,
+            holes=False,
+        ),
+    },
+)
+
+
+@configclass
+class RobotDataAuditEnvCfg(RobotEnvCfg):
+    """Configuration for data collection (Strict forward walking on diverse terrains)."""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        # Override terrain to use the audit mix
+        self.scene.terrain.terrain_generator = AUDIT_TERRAIN_CFG
+        # Ensure curriculum is off to get full difficulty range immediately if needed,
+        # or keep it if we want to sample across difficulty levels.
+        # For data audit, usually we want diversity.
+
+        # Override commands to strict forward walking
+        # Range: [0.5, 1.0] m/s forward
+        self.commands.base_velocity.ranges.lin_vel_x = (0.5, 1.0)
+        self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+
+        # Also set limit ranges to match to avoid any sampling outside
+        self.commands.base_velocity.limit_ranges.lin_vel_x = (0.5, 1.0)
+        self.commands.base_velocity.limit_ranges.lin_vel_y = (0.0, 0.0)
+        self.commands.base_velocity.limit_ranges.ang_vel_z = (0.0, 0.0)
